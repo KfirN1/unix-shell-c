@@ -8,7 +8,8 @@
 #include <string.h>
 #include <signal.h>
 
-#define MAX_COMMANDS 10
+#define MAX_COMMANDS 10 // max commands in one pipeline
+#define MAX_ARGS 64     // max words in one command (including the terminating NULL)
 
 int last_status = 0;
 char current_prompt[1024] = "hello: ";
@@ -146,7 +147,7 @@ void execute_pipe(char *command)
     int cmd_count = 0;
 
     char *token = strtok(command, "|");
-    while (token != NULL)
+    while (token != NULL && cmd_count < MAX_COMMANDS)
     {
         cmds[cmd_count++] = token;
         token = strtok(NULL, "|");
@@ -180,10 +181,10 @@ void execute_pipe(char *command)
             if (i == cmd_count - 1)
                 check_and_apply_redirection(cmds[i], 0);
 
-            char *argv[MAX_COMMANDS];
+            char *argv[MAX_ARGS];
             int j = 0;
             char *inner = strtok(cmds[i], " ");
-            while (inner != NULL)
+            while (inner != NULL && j < MAX_ARGS - 1)
             {
                 argv[j++] = inner;
                 inner = strtok(NULL, " ");
@@ -213,8 +214,8 @@ int main()
     char command[1024];
     char *token;
     char *outfile;
-    int i, fd, amper, redirect, retid, status;
-    char *argv[10];
+    int i, amper, redirect, retid, status;
+    char *argv[MAX_ARGS];
 
     signal(SIGINT, sigint_handler);
     signal(SIGCHLD, sigchld_handler);
@@ -223,8 +224,12 @@ int main()
     {
         printf("%s", current_prompt);
         fflush(stdout);
-        fgets(command, 1024, stdin);
-        command[strlen(command) - 1] = '\0'; // replace \n with \0
+        if (fgets(command, 1024, stdin) == NULL) // Ctrl-D / end of input
+        {
+            printf("\n");
+            exit(0);
+        }
+        command[strcspn(command, "\n")] = '\0'; // replace \n with \0
 
         if (strchr(command, '|') != NULL)
         {
@@ -267,7 +272,7 @@ int main()
         /* parse command line */
         i = 0;
         token = strtok(command, " ");
-        while (token != NULL)
+        while (token != NULL && i < MAX_ARGS - 1)
         {
             argv[i] = token;
             token = strtok(NULL, " ");
@@ -286,7 +291,8 @@ int main()
 
         else if (strcmp(argv[0], "cd") == 0)
         {
-            if (chdir(argv[1]) != 0)
+            const char *dir = argv[1] != NULL ? argv[1] : getenv("HOME");
+            if (dir == NULL || chdir(dir) != 0)
             {
                 perror("cd failed");
             }
@@ -301,7 +307,7 @@ int main()
 
         else if (strcmp(argv[0], "prompt") == 0)
         {
-            if (argv[2] != NULL)
+            if (argv[1] != NULL && argv[2] != NULL)
             {
                 strcpy(current_prompt, argv[2]);
             }
@@ -356,8 +362,17 @@ int main()
 
         /* for commands not part of the shell command language */
 
-        if (fork() == 0)
+        /* Block SIGCHLD until we have waited for a foreground child, so the
+           SIGCHLD handler cannot reap it first and lose its exit status. */
+        sigset_t chld_mask, prev_mask;
+        sigemptyset(&chld_mask);
+        sigaddset(&chld_mask, SIGCHLD);
+        sigprocmask(SIG_BLOCK, &chld_mask, &prev_mask);
+
+        pid_t pid = fork();
+        if (pid == 0)
         {
+            sigprocmask(SIG_SETMASK, &prev_mask, NULL);
             signal(SIGINT, SIG_DFL);
 
             if (redirect > 0)
@@ -373,8 +388,10 @@ int main()
         /* parent continues here */
         if (amper == 0)
         {
-            retid = wait(&status);
-            last_status = status >> 8;
+            retid = waitpid(pid, &status, 0);
+            if (retid == pid)
+                last_status = status >> 8;
         }
+        sigprocmask(SIG_SETMASK, &prev_mask, NULL);
     }
 }

@@ -8,7 +8,8 @@ and extended to the full implementation in `shell.c`.
 
 - **Pipelines** of any length: `ls -l | grep .c | wc -l`
 - **I/O redirection**: `>` (overwrite), `>>` (append), `<` (input), `2>` (stderr)
-- **Background jobs** with `&`; finished children are reaped by a `SIGCHLD` handler (no zombie processes)
+- **Background jobs** with `&`; finished children are reaped by a `SIGCHLD` handler (no zombie processes), while `SIGCHLD` is blocked during foreground waits so exit statuses are never lost
+- **Ctrl-D** (end of input) exits cleanly
 - **Ctrl-C handling**: the shell itself ignores `SIGINT` and prints a message, while foreground children get the default behaviour
 - **History**: `!!` repeats the last command, the ↑ arrow key recalls previous commands
 - **Built-ins**:
@@ -22,6 +23,7 @@ and extended to the full implementation in `shell.c`.
 ```bash
 make
 ./myshell
+sh tests/run_tests.sh   # smoke tests
 ```
 
 ## Example
